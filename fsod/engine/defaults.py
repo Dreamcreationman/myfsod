@@ -16,8 +16,8 @@ from detectron2.data import transforms as T
 from detectron2.engine import SimpleTrainer, hooks
 from detectron2.utils.events import TensorboardXWriter, CommonMetricPrinter, JSONWriter
 from detectron2.solver import build_lr_scheduler, build_optimizer
-from detectron2.data import MetadataCatalog, build_detection_test_loader, build_detection_train_loader
 
+from fsod.dataloader import MetadataCatalog, build_detection_test_loader, build_detection_train_loader
 from fsod.modeling import build_model
 from fsod.checkpoint import DetectionCheckpointer
 from fsod.evaluation import DatasetEvaluator, inference_on_dataset, print_csv_format, verify_results
@@ -65,7 +65,7 @@ def default_argument_parser():
              "https://pytorch.org/docs/stable/distributed.html for details.",
     )
     parser.add_argument(
-        "opts",
+        "--opts",
         help="""
     Modify config options at the end of the command. For Yacs configs, use
     space-separated "PATH.KEY VALUE" pairs.

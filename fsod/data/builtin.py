@@ -72,3 +72,7 @@ def register_all_coco(root="datasets"):
             os.path.join(root, imgdir),
             os.path.join(root, annofile),
         )
+
+
+register_all_coco()
+register_all_voc()

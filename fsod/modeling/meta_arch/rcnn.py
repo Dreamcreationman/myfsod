@@ -4,15 +4,14 @@ import torch
 from torch import nn
 
 from detectron2.config import configurable
-from detectron2.data.detection_utils import convert_image_to_rgb
 from detectron2.structures import ImageList, Instances
-from detectron2.utils.events import get_event_storage
 from detectron2.modeling.backbone import Backbone, build_backbone
 from detectron2.modeling.postprocessing import detector_postprocess
 from detectron2.modeling.proposal_generator import build_proposal_generator
 from detectron2.modeling.roi_heads import build_roi_heads
 
 from .build import META_ARCH_REGISTRY
+from .gdl import AffineLayer, decouple_layer
 
 __all__ = ["GeneralizedRCNN"]
 
@@ -33,10 +32,9 @@ class GeneralizedRCNN(nn.Module):
         backbone: Backbone,
         proposal_generator: nn.Module,
         roi_heads: nn.Module,
+        device: torch.device,
         pixel_mean: Tuple[float],
         pixel_std: Tuple[float],
-        input_format: Optional[str] = None,
-        vis_period: int = 0,
     ):
         """
         Args:
@@ -50,71 +48,48 @@ class GeneralizedRCNN(nn.Module):
         """
         super().__init__()
         self.backbone = backbone
+        self._SHAPE_ = self.backbone.output_shape()
         self.proposal_generator = proposal_generator
         self.roi_heads = roi_heads
+        self.device = device
+        self.pixel_mean = pixel_mean
+        self.pixel_std = pixel_std
 
-        self.input_format = input_format
-        self.vis_period = vis_period
-        if vis_period > 0:
-            assert input_format is not None, "input_format is required for visualization!"
-
-        self.register_buffer("pixel_mean", torch.tensor(pixel_mean).view(-1, 1, 1), False)
-        self.register_buffer("pixel_std", torch.tensor(pixel_std).view(-1, 1, 1), False)
-        assert (
-            self.pixel_mean.shape == self.pixel_std.shape
-        ), f"{self.pixel_mean} and {self.pixel_std} have different shapes!"
+        self.affine_rpn = AffineLayer(num_channels=self._SHAPE_['res4'].channels, bias=True)
+        self.affine_rcnn = AffineLayer(num_channels=self._SHAPE_['res4'].channels, bias=True)
+        self.normalizer = self.normalize_fn()
+        self.to(self.device)
 
     @classmethod
     def from_config(cls, cfg):
         backbone = build_backbone(cfg)
+        proposal_generator = build_proposal_generator(cfg, backbone.output_shape())
+        roi_heads = build_roi_heads(cfg, backbone.output_shape())
+
+        device = torch.device(cfg.MODEL.DEVICE)
+        if cfg.MODEL.BACKBONE.FREEZE:
+            for p in backbone.parameters():
+                p.requires_grad = False
+            print("froze backbone parameters")
+
+        if cfg.MODEL.RPN.FREEZE:
+            for p in proposal_generator.parameters():
+                p.requires_grad = False
+            print("froze proposal generator parameters")
+
+        if cfg.MODEL.ROI_HEADS.FREEZE_FEAT:
+            for p in roi_heads.res5.parameters():
+                p.requires_grad = False
+            print("froze roi_box_head parameters")
+
         return {
             "backbone": backbone,
-            "proposal_generator": build_proposal_generator(cfg, backbone.output_shape()),
-            "roi_heads": build_roi_heads(cfg, backbone.output_shape()),
-            "input_format": cfg.INPUT.FORMAT,
-            "vis_period": cfg.VIS_PERIOD,
+            "proposal_generator": proposal_generator,
+            "roi_heads": roi_heads,
+            "device": device,
             "pixel_mean": cfg.MODEL.PIXEL_MEAN,
             "pixel_std": cfg.MODEL.PIXEL_STD,
         }
-
-    @property
-    def device(self):
-        return self.pixel_mean.device
-
-    def visualize_training(self, batched_inputs, proposals):
-        """
-        A function used to visualize images and proposals. It shows ground truth
-        bounding boxes on the original image and up to 20 top-scoring predicted
-        object proposals on the original image. Users can implement different
-        visualization functions for different models.
-
-        Args:
-            batched_inputs (list): a list that contains input to the model.
-            proposals (list): a list that contains predicted proposals. Both
-                batched_inputs and proposals should have the same length.
-        """
-        from detectron2.utils.visualizer import Visualizer
-
-        storage = get_event_storage()
-        max_vis_prop = 20
-
-        for input, prop in zip(batched_inputs, proposals):
-            img = input["image"]
-            img = convert_image_to_rgb(img.permute(1, 2, 0), self.input_format)
-            v_gt = Visualizer(img, None)
-            v_gt = v_gt.overlay_instances(boxes=input["instances"].gt_boxes)
-            anno_img = v_gt.get_image()
-            box_size = min(len(prop.proposal_boxes), max_vis_prop)
-            v_pred = Visualizer(img, None)
-            v_pred = v_pred.overlay_instances(
-                boxes=prop.proposal_boxes[0:box_size].tensor.cpu().numpy()
-            )
-            prop_img = v_pred.get_image()
-            vis_img = np.concatenate((anno_img, prop_img), axis=1)
-            vis_img = vis_img.transpose(2, 0, 1)
-            vis_name = "Left: GT bounding boxes;  Right: Predicted proposals"
-            storage.put_image(vis_name, vis_img)
-            break  # only visualize one image in a batch
 
     def forward(self, batched_inputs: List[Dict[str, torch.Tensor]]):
         """
@@ -151,17 +126,18 @@ class GeneralizedRCNN(nn.Module):
         features = self.backbone(images.tensor)
 
         if self.proposal_generator is not None:
-            proposals, proposal_losses = self.proposal_generator(images, features, gt_instances)
+            rpn_scale = 0.0
+            features_de_rpn = {k: self.affine_rpn(decouple_layer(features[k], rpn_scale)) for k in features}
+            proposals, proposal_losses = self.proposal_generator(images, features_de_rpn, gt_instances)
         else:
             assert "proposals" in batched_inputs[0]
             proposals = [x["proposals"].to(self.device) for x in batched_inputs]
             proposal_losses = {}
 
-        _, detector_losses = self.roi_heads(images, features, proposals, gt_instances)
-        if self.vis_period > 0:
-            storage = get_event_storage()
-            if storage.iter % self.vis_period == 0:
-                self.visualize_training(batched_inputs, proposals)
+        # rcnn_scale = 0.75 # Base Training
+        rcnn_scale = 0.001 # finetuning
+        features_de_rcnn = {k: self.affine_rcnn(decouple_layer(features[k], rcnn_scale)) for k in features}
+        _, detector_losses = self.roi_heads(images, features_de_rcnn, proposals, gt_instances)
 
         losses = {}
         losses.update(detector_losses)
@@ -198,12 +174,17 @@ class GeneralizedRCNN(nn.Module):
 
         if detected_instances is None:
             if self.proposal_generator is not None:
-                proposals, _ = self.proposal_generator(images, features, None)
+                rpn_scale = 0.0
+                features_de_rpn = {k: self.affine_rpn(decouple_layer(features[k], rpn_scale)) for k in features}
+                proposals, _ = self.proposal_generator(images, features_de_rpn, None)
             else:
                 assert "proposals" in batched_inputs[0]
                 proposals = [x["proposals"].to(self.device) for x in batched_inputs]
 
-            results, _ = self.roi_heads(images, features, proposals, None)
+            rcnn_scale = 0.75 # Base Training
+            # rcnn_scale = 0.001 # Finetune
+            features_de_rcnn = {k: self.affine_rcnn(decouple_layer(features[k], rcnn_scale)) for k in features}
+            results, _ = self.roi_heads(images, features_de_rcnn, proposals, None)
         else:
             detected_instances = [x.to(self.device) for x in detected_instances]
             results = self.roi_heads.forward_with_given_boxes(features, detected_instances)
@@ -219,7 +200,7 @@ class GeneralizedRCNN(nn.Module):
         Normalize, pad and batch the input images.
         """
         images = [x["image"].to(self.device) for x in batched_inputs]
-        images = [(x - self.pixel_mean) / self.pixel_std for x in images]
+        images = [self.normalizer(x) for x in images]
         images = ImageList.from_tensors(images, self.backbone.size_divisibility)
         return images
 
@@ -238,3 +219,12 @@ class GeneralizedRCNN(nn.Module):
             r = detector_postprocess(results_per_image, height, width)
             processed_results.append({"instances": r})
         return processed_results
+
+    def normalize_fn(self):
+        assert len(self.pixel_mean) == len(self.pixel_std)
+        num_channels = len(self.pixel_mean)
+        pixel_mean = (torch.Tensor(
+            self.pixel_mean).to(self.device).view(num_channels, 1, 1))
+        pixel_std = (torch.Tensor(
+            self.pixel_std).to(self.device).view(num_channels, 1, 1))
+        return lambda x: (x - pixel_mean) / pixel_std

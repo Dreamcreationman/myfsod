@@ -47,7 +47,7 @@ class PascalVOCDetectionEvaluator(DatasetEvaluator):
 
     def process(self, inputs, outputs):
         for input, output in zip(inputs, outputs):
-            image_id = input["image_id"]
+            image_id = input["img_id"]
             instances = output["instances"].to(self._cpu_device)
             boxes = instances.pred_boxes.tensor.numpy()
             scores = instances.scores.tolist()

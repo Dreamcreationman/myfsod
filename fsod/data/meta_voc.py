@@ -34,7 +34,7 @@ def load_filtered_voc_instance(name, dirname, split, classnames):
         split_dir = os.path.join("datasets", "vocsplit")
         shot = name.split("_")[-2].split("shot")[0]
         seed = int(name.split("_seed")[-1])
-        split_dir = os.path.join(split_dir, "seed_{}".format(seed))
+        split_dir = os.path.join(split_dir, "seed{}".format(seed))
         for cls in classnames:
             with PathManager.open(os.path.join(split_dir, "box_{}shot_{}_train.txt".format(shot, cls))) as f:
                 fileids_ = np.loadtxt(f, dtype=np.str).tolist()
@@ -89,7 +89,7 @@ def load_filtered_voc_instance(name, dirname, split, classnames):
                 dicts_ = np.random.choice(dicts_, int(shot), replace=False)
             dicts.extend(dicts_)
     else:
-        with PathManager.open(dirname, "ImageSets", "Main", split+".txt") as f:
+        with PathManager.open(os.path.join(dirname, "ImageSets", "Main", split+".txt")) as f:
             file_ids = np.loadtxt(f, dtype=np.str)
             for file_id in file_ids:
                 anno_file = os.path.join(dirname, "Annotations", file_id+".xml")
@@ -113,7 +113,7 @@ def load_filtered_voc_instance(name, dirname, split, classnames):
 
                     instances.append(
                         {
-                            "cate_id": classnames.index(cls),
+                            "category_id": classnames.index(cls),
                             "bbox": bbox,
                             "bbox_mode": BoxMode.XYXY_ABS
                         }
