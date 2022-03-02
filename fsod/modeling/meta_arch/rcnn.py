@@ -11,7 +11,6 @@ from detectron2.modeling.proposal_generator import build_proposal_generator
 from detectron2.modeling.roi_heads import build_roi_heads
 
 from .build import META_ARCH_REGISTRY
-from .gdl import AffineLayer, decouple_layer
 
 __all__ = ["GeneralizedRCNN"]
 
@@ -55,8 +54,6 @@ class GeneralizedRCNN(nn.Module):
         self.pixel_mean = pixel_mean
         self.pixel_std = pixel_std
 
-        self.affine_rpn = AffineLayer(num_channels=self._SHAPE_['res4'].channels, bias=True)
-        self.affine_rcnn = AffineLayer(num_channels=self._SHAPE_['res4'].channels, bias=True)
         self.normalizer = self.normalize_fn()
         self.to(self.device)
 
@@ -126,18 +123,13 @@ class GeneralizedRCNN(nn.Module):
         features = self.backbone(images.tensor)
 
         if self.proposal_generator is not None:
-            rpn_scale = 0.0
-            features_de_rpn = {k: self.affine_rpn(decouple_layer(features[k], rpn_scale)) for k in features}
-            proposals, proposal_losses = self.proposal_generator(images, features_de_rpn, gt_instances)
+            proposals, proposal_losses = self.proposal_generator(images, features, gt_instances)
         else:
             assert "proposals" in batched_inputs[0]
             proposals = [x["proposals"].to(self.device) for x in batched_inputs]
             proposal_losses = {}
 
-        # rcnn_scale = 0.75 # Base Training
-        rcnn_scale = 0.001 # finetuning
-        features_de_rcnn = {k: self.affine_rcnn(decouple_layer(features[k], rcnn_scale)) for k in features}
-        _, detector_losses = self.roi_heads(images, features_de_rcnn, proposals, gt_instances)
+        _, detector_losses = self.roi_heads(images, features, proposals, gt_instances)
 
         losses = {}
         losses.update(detector_losses)
@@ -174,17 +166,12 @@ class GeneralizedRCNN(nn.Module):
 
         if detected_instances is None:
             if self.proposal_generator is not None:
-                rpn_scale = 0.0
-                features_de_rpn = {k: self.affine_rpn(decouple_layer(features[k], rpn_scale)) for k in features}
-                proposals, _ = self.proposal_generator(images, features_de_rpn, None)
+                proposals, _ = self.proposal_generator(images, features, None)
             else:
                 assert "proposals" in batched_inputs[0]
                 proposals = [x["proposals"].to(self.device) for x in batched_inputs]
 
-            rcnn_scale = 0.75 # Base Training
-            # rcnn_scale = 0.001 # Finetune
-            features_de_rcnn = {k: self.affine_rcnn(decouple_layer(features[k], rcnn_scale)) for k in features}
-            results, _ = self.roi_heads(images, features_de_rcnn, proposals, None)
+            results, _ = self.roi_heads(images, features, proposals, None)
         else:
             detected_instances = [x.to(self.device) for x in detected_instances]
             results = self.roi_heads.forward_with_given_boxes(features, detected_instances)

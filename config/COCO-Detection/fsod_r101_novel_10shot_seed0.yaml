@@ -22,4 +22,4 @@ SOLVER:
   MAX_ITER: 1000
   CHECKPOINT_PERIOD: 100000
   WARMUP_ITERS: 0
-OUTPUT_DIR: "checkpoints/coco/gdl/fsod_r101_ft"
+OUTPUT_DIR: "checkpoints/coco/fsod_r101_ft"

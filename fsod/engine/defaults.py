@@ -16,10 +16,10 @@ from detectron2.data import transforms as T
 from detectron2.engine import SimpleTrainer, hooks
 from detectron2.utils.events import TensorboardXWriter, CommonMetricPrinter, JSONWriter
 from detectron2.solver import build_lr_scheduler, build_optimizer
+from detectron2.checkpoint import DetectionCheckpointer
 
 from fsod.dataloader import MetadataCatalog, build_detection_test_loader, build_detection_train_loader
 from fsod.modeling import build_model
-from fsod.checkpoint import DetectionCheckpointer
 from fsod.evaluation import DatasetEvaluator, inference_on_dataset, print_csv_format, verify_results
 
 
@@ -291,12 +291,11 @@ class DefaultTrainer(SimpleTrainer):
         Args:
             resume (bool): whether to do resume or not
         """
-        self.start_iter = (
-                self.checkpointer.resume_or_load(
-                    self.cfg.MODEL.WEIGHTS, resume=resume
-                ).get("iteration", -1)
-                + 1
-        )
+        self.checkpointer.resume_or_load(self.cfg.MODEL.WEIGHTS, resume=resume)
+        if resume and self.checkpointer.has_checkpoint():
+            # The checkpoint stores the training iteration that just finished, thus we start
+            # at the next iteration
+            self.start_iter = self.iter + 1
 
     def build_hooks(self):
         """

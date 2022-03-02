@@ -14,4 +14,4 @@ SOLVER:
   STEPS: (85000, 100000)
   MAX_ITER: 110000
   CHECKPOINT_PERIOD: 200000
-OUTPUT_DIR: "checkpoints/coco/gdl/fsod_r101_base1"
+OUTPUT_DIR: "checkpoints/coco/origin/fsod_r101_base1"
