@@ -8,7 +8,7 @@ from detectron2.structures import ImageList, Instances
 from detectron2.modeling.backbone import Backbone, build_backbone
 from detectron2.modeling.postprocessing import detector_postprocess
 from detectron2.modeling.proposal_generator import build_proposal_generator
-from detectron2.modeling.roi_heads import build_roi_heads
+from fsod.modeling.roi_heads import build_roi_heads
 
 from .build import META_ARCH_REGISTRY
 

@@ -17,5 +17,4 @@ SOLVER:
   MAX_ITER: 15000
   WARMUP_ITERS: 100
   CHECKPOINT_PERIOD: 200000
-#OUTPUT_DIR: "/path/to/output/dir"
-OUTPUT_DIR: "checkpoints/voc/gdl/fsod_r101_base1"
+OUTPUT_DIR: "checkpoints/voc/origin/fsod_r101_base1"
